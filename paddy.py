@@ -6,10 +6,11 @@ from fastcore.parallel import *
 import timm
 
 
-
+# Configuration
 path = Path('paddy-disease-classification')
 dataset_name = 'imbikramsaha/paddy-doctor'
 creds = ''
+arch = 'convnext_small_in22k'
 
 
 def download_data():
@@ -26,75 +27,77 @@ def download_data():
     else:
         print("Data already exists!")
 
+
 def get_image_size(image_path):
     return PILImage.create(image_path).size
 
-download_data()
-set_seed(42)
-trn_path = path/'paddy-disease-classification/train_images'
-files = get_image_files(trn_path)
 
-sizes = parallel(get_image_size, files, n_workers=8)
-print("sizes", pd.Series(sizes).value_counts())
-dls = ImageDataLoaders.from_folder(trn_path, valid_pct=0.2, seed=42,
-    item_tfms=Resize(224),
-    batch_tfms=aug_transforms(size=224, min_scale=0.75))
+def analyze_image_sizes():
+    trn_path = path/'paddy-disease-classification/train_images'
+    return trn_path
 
-# Print dataset info
-print(f"Classes: {dls.vocab}")
-print(f"Number of classes: {len(dls.vocab)}")
-print(f"Training samples: {len(dls.train_ds)}")
-print(f"Validation samples: {len(dls.valid_ds)}")
 
-# Get a batch and print its info
-batch = dls.one_batch()
-x, y = batch
-print(f"Batch shape: {x.shape}")
-print(f"Labels in batch: {y}")
-print(f"Label names: {[dls.vocab[i] for i in y]}")
+def create_data_loaders(trn_path):
+    dls = ImageDataLoaders.from_folder(trn_path, valid_pct=0.2, seed=42,
+        item_tfms=Resize(224),
+        batch_tfms=aug_transforms(size=224, min_scale=0.75))
+    return dls
 
-# Print first few file paths to verify data loading
-print(f"Sample file paths:")
-for i in range(min(5, len(dls.train_ds))):
-    item = dls.train_ds.items[i]
-    print(f"  {item}")
 
-learn = vision_learner(dls, 'resnet26d', metrics=error_rate, path='./models').to_fp16()
+def print_dataset_info(dls):
+    print(f"\nDataset Info:")
+    print(f"Classes ({len(dls.vocab)}): {dls.vocab}")
+    print(f"Training samples: {len(dls.train_ds)}, Validation samples: {len(dls.valid_ds)}")
 
-lr_find_result = learn.lr_find(suggest_funcs=(valley, slide))
-print(f"\nLearning rate finder results:")
-print(f"Valley suggestion: {lr_find_result.valley:.2e}")
-print(f"Slide suggestion:  {lr_find_result.slide:.2e}")
-print(f"Ratio (slide/valley): {lr_find_result.slide/lr_find_result.valley:.1f}x")
 
-# Calculate and store learning rates for different approaches
-conservative_lr = lr_find_result.valley
-aggressive_lr = lr_find_result.slide
-balanced_lr = (conservative_lr + aggressive_lr) / 2
 
-print(f"\nStored Learning Rates:")
-print(f"Conservative LR: {conservative_lr:.2e}")
-print(f"Aggressive LR:   {aggressive_lr:.2e}")
-print(f"Balanced LR:     {balanced_lr:.2e} (average of both)")
 
-# Analysis
-print(f"\nAnalysis:")
-print(f"• Conservative LR ({conservative_lr:.2e}) - Use for stable, steady training")
-print(f"• Aggressive LR ({aggressive_lr:.2e}) - Use for fast convergence with one-cycle") 
-print(f"• Balanced LR ({balanced_lr:.2e}) - Use as a middle-ground approach")
-print(f"• The aggressive is {aggressive_lr/conservative_lr:.1f}x higher than conservative")
-if aggressive_lr/conservative_lr > 5:
-    print(f"• Large ratio suggests the model can handle aggressive learning rates")
-else:
-    print(f"• Moderate ratio suggests more conservative learning rate scheduling")
+def create_model(dls, arch='resnet26d'):
+    learn = vision_learner(dls, arch, metrics=error_rate, path='./models').to_fp16()
+    return learn
 
-learn.fine_tune(3, lr=balanced_lr)
 
-# Check the error rate and loss after training
-print(f"\nFinal Training Results:")
-val_loss, error_rate = learn.validate()
-accuracy = 1 - error_rate
+def find_learning_rate(learn):
+    lr_find_result = learn.lr_find(suggest_funcs=(valley, slide))
+    return lr_find_result
 
-print(f"Validation loss: {val_loss:.4f}")
-print(f"Error rate: {error_rate:.4f}")
-print(f"Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+
+def analyze_learning_rates(lr_find_result):
+    conservative_lr = lr_find_result.valley
+    aggressive_lr = lr_find_result.slide
+    balanced_lr = (conservative_lr + aggressive_lr) / 2
+    print(f"Learning Rate: {balanced_lr:.2e} (balanced between {conservative_lr:.2e} and {aggressive_lr:.2e})")
+    return balanced_lr
+
+
+def train_model(dls, epochs):
+    learn = create_model(dls)
+    lr_find_result = find_learning_rate(learn)
+    balanced_lr = analyze_learning_rates(lr_find_result)
+    learn.fine_tune(epochs, balanced_lr)
+    valid = learn.dls.valid
+    preds,targs = learn.get_preds(dl=valid)
+    return learn.tta(dl=valid), preds, targs
+
+
+def print_final_results(learn, tta_preds, preds, targs):
+    err = error_rate(tta_preds, targs)
+    accuracy = 1 - err.item()
+    print(f"\nFinal Results:")
+    print(f"Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    print(f"Error Rate: {err.item():.4f}")
+
+def main():
+    download_data()
+    set_seed(42)
+    
+    trn_path = analyze_image_sizes()
+    dls = create_data_loaders(trn_path)
+    print_dataset_info(dls)
+    
+    print(f"\nTraining model with {arch} for 3 epochs...")
+    learn, tta_preds, preds, targs = train_model(dls, 3)
+    print_final_results(learn, tta_preds, preds, targs)
+
+if __name__ == "__main__":
+    main()
