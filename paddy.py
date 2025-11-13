@@ -11,6 +11,7 @@ path = Path('paddy-disease-classification')
 dataset_name = 'imbikramsaha/paddy-doctor'
 creds = ''
 arch = 'convnext_small_in22k'
+epochs = 3
 
 
 def download_data():
@@ -76,11 +77,12 @@ def train_model(dls, epochs):
     balanced_lr = analyze_learning_rates(lr_find_result)
     learn.fine_tune(epochs, balanced_lr)
     valid = learn.dls.valid
-    preds,targs = learn.get_preds(dl=valid)
-    return learn.tta(dl=valid), preds, targs
+    _,targs = learn.get_preds(dl=valid)
+    return learn, targs, valid
 
 
-def print_final_results(learn, tta_preds, preds, targs):
+def print_final_results(learn, targs, valid):
+    tta_preds, _ = learn.tta(dl=valid)
     err = error_rate(tta_preds, targs)
     accuracy = 1 - err.item()
     print(f"\nFinal Results:")
@@ -95,9 +97,9 @@ def main():
     dls = create_data_loaders(trn_path)
     print_dataset_info(dls)
     
-    print(f"\nTraining model with {arch} for 3 epochs...")
-    learn, tta_preds, preds, targs = train_model(dls, 3)
-    print_final_results(learn, tta_preds, preds, targs)
+    print(f"\nTraining model with {arch} for {epochs} epochs...")
+    learn, targs, valid = train_model(dls, epochs)
+    print_final_results(learn, targs, valid)
 
 if __name__ == "__main__":
     main()
