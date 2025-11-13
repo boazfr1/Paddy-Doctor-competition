@@ -29,15 +29,6 @@ def download_data():
         print("Data already exists!")
 
 
-def get_image_size(image_path):
-    return PILImage.create(image_path).size
-
-
-def analyze_image_sizes():
-    trn_path = path/'paddy-disease-classification/train_images'
-    return trn_path
-
-
 def create_data_loaders(trn_path):
     dls = ImageDataLoaders.from_folder(trn_path, valid_pct=0.2, seed=42,
         item_tfms=Resize(224),
@@ -51,12 +42,9 @@ def print_dataset_info(dls):
     print(f"Training samples: {len(dls.train_ds)}, Validation samples: {len(dls.valid_ds)}")
 
 
-
-
 def create_model(dls, arch='resnet26d'):
     learn = vision_learner(dls, arch, metrics=error_rate, path='./models').to_fp16()
     return learn
-
 
 def find_learning_rate(learn):
     lr_find_result = learn.lr_find(suggest_funcs=(valley, slide))
@@ -93,8 +81,7 @@ def main():
     download_data()
     set_seed(42)
     
-    trn_path = analyze_image_sizes()
-    dls = create_data_loaders(trn_path)
+    dls = create_data_loaders(path/'paddy-disease-classification/train_images')
     print_dataset_info(dls)
     
     print(f"\nTraining model with {arch} for {epochs} epochs...")
